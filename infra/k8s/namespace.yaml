@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: poly-orchestrator
+  labels:
+    app.kubernetes.io/name: poly-orchestrator
+    environment: production

@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: poly-orchestrator-config
+  namespace: poly-orchestrator
+  labels:
+    app.kubernetes.io/name: poly-orchestrator
+data:
+  APP_ENV: "production"
+  APP_HOST: "0.0.0.0"
+  APP_PORT: "8000"
+  APP_LOG_LEVEL: "INFO"
+  OPENAI_MODEL: "gpt-4o"
+  ANTHROPIC_MODEL: "claude-sonnet-4-6"
+  GOOGLE_MODEL: "gemini-1.5-pro"
+  PERPLEXITY_MODEL: "sonar-pro"
+  GROQ_MODEL: "llama-3.3-70b-versatile"
+  ENABLED_ADAPTERS: "openai,anthropic,google,perplexity,groq"
+  ORCHESTRATOR_TIMEOUT_SECONDS: "30"
+  ORCHESTRATOR_MAX_CONCURRENCY: "10"
+  PROMETHEUS_ENABLED: "true"
+  DATABASE_POOL_SIZE: "10"
+  DATABASE_MAX_OVERFLOW: "20"
+  CACHE_TTL_SECONDS: "300"
