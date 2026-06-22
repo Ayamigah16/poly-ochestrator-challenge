@@ -1,0 +1,28 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    project: poly-orchestrator
+    environment: local
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+rule_files: []
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: [localhost:9090]
+
+  - job_name: poly-orchestrator
+    metrics_path: /metrics
+    static_configs:
+      - targets: [app:8000]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        regex: "(.+):.*"
+        replacement: "$1"

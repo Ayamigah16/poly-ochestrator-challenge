@@ -8,11 +8,13 @@ import structlog
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from poly_orchestrator import __version__
 from poly_orchestrator.api.routes import health, queries, reports
 from poly_orchestrator.config import get_settings
+from poly_orchestrator.metrics.prometheus import ACTIVE_ADAPTERS
 
 structlog.configure(
     processors=[
@@ -70,6 +72,12 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(queries.router)
     app.include_router(reports.router)
+
+    if settings.prometheus_enabled:
+
+        @app.get("/metrics", include_in_schema=False)
+        async def metrics() -> Response:
+            return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     return app
 
