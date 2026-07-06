@@ -2,6 +2,19 @@
 
 Operational reference for on-call engineers, DevOps, and anyone deploying or debugging the platform.
 
+**Deployment scripts available.** The `scripts/` directory automates every operation in this runbook. Each relevant section shows the script one-liner first; raw commands are kept for reference or finer control.
+
+| Script | Purpose |
+| --- | --- |
+| `scripts/setup-local.sh` | Bootstrap a local dev environment from scratch |
+| `scripts/compose-deploy.sh` | Full Docker Compose deploy with health check |
+| `scripts/k8s-deploy.sh` | Kubernetes deploy — apply manifests, migrate, watch rollout |
+| `scripts/k8s-rollback.sh` | Instant rollback with revision listing |
+| `scripts/terraform-bootstrap.sh` | One-time S3 + DynamoDB remote state setup |
+| `scripts/terraform-apply.sh` | Terraform plan + apply with safety gate |
+| `scripts/release.sh` | Cut a semver release — validates, tags, pushes |
+| `scripts/smoke-test.sh` | 5-point health/API smoke test after any deploy |
+
 ---
 
 ## Table of Contents
@@ -29,7 +42,7 @@ Operational reference for on-call engineers, DevOps, and anyone deploying or deb
 ## 1. Service Overview
 
 | Property | Value |
-|---|---|
+| --- | --- |
 | Language | Python 3.11+ |
 | Framework | FastAPI + uvicorn |
 | Database | PostgreSQL 15 (async via asyncpg) |
@@ -45,7 +58,7 @@ Operational reference for on-call engineers, DevOps, and anyone deploying or deb
 ## 2. Prerequisites
 
 | Tool | Minimum version | Install |
-|---|---|---|
+| --- | --- | --- |
 | Python | 3.11 | `pyenv install 3.11` |
 | Docker | 24.0 | [docs.docker.com](https://docs.docker.com/get-docker/) |
 | Docker Compose | v2.20 | included with Docker Desktop |
@@ -57,6 +70,30 @@ Operational reference for on-call engineers, DevOps, and anyone deploying or deb
 ---
 
 ## 3. Local Development Setup
+
+### Automated (recommended)
+
+```bash
+git clone https://github.com/Ayamigah16/poly-ochestrator-challenge.git
+cd poly-ochestrator-challenge
+./scripts/setup-local.sh
+```
+
+The script handles all steps — virtualenv, dependency install, `.env` creation, pre-commit hooks, backing services, and migrations. Safe to re-run.
+
+```bash
+./scripts/setup-local.sh --skip-services   # use pre-existing postgres/redis instances
+./scripts/setup-local.sh --skip-migrate    # skip alembic upgrade head
+```
+
+After setup, start the app:
+
+```bash
+source .venv/bin/activate
+uvicorn poly_orchestrator.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### Manual steps (reference)
 
 ```bash
 # 1. Clone
@@ -88,6 +125,7 @@ uvicorn poly_orchestrator.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 Verify it is running:
+
 ```bash
 curl http://localhost:8000/health
 # Expected: {"status":"ok","version":"0.1.0","database":"ok","redis":"ok","adapters_configured":["openai",...]}
@@ -97,7 +135,23 @@ curl http://localhost:8000/health
 
 ## 4. Docker Compose — Full Stack
 
-### Start the full stack
+### Automated deploy (recommended)
+
+```bash
+./scripts/compose-deploy.sh              # build → migrate → start → health check
+./scripts/compose-deploy.sh --rebuild    # force image rebuild from scratch
+./scripts/compose-deploy.sh --logs       # follow app logs after deploy
+./scripts/compose-deploy.sh --no-monitoring  # skip Prometheus + Grafana
+./scripts/compose-deploy.sh --down       # stop the stack (volumes preserved)
+```
+
+After deploy, run the smoke test:
+
+```bash
+./scripts/smoke-test.sh
+```
+
+### Manual Compose commands
 
 ```bash
 # Builds the image locally, starts all 6 services
@@ -113,7 +167,7 @@ docker compose logs -f app
 ### Service URLs (local)
 
 | Service | URL |
-|---|---|
+| --- | --- |
 | API | http://localhost:8000 |
 | Swagger UI | http://localhost:8000/docs |
 | Prometheus | http://localhost:9090 |
@@ -292,7 +346,7 @@ All four scans run in CI on every push to `main`/`develop` and nightly at 02:00 
 Copy `.env.example` to `.env` and populate. Never commit `.env`.
 
 | Variable | Default | Required | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `APP_ENV` | `development` | | `development` \| `staging` \| `production` |
 | `APP_HOST` | `0.0.0.0` | | Bind address |
 | `APP_PORT` | `8000` | | Bind port |
@@ -387,14 +441,12 @@ myprovider_model: str = "best-model-v1"
 - EKS cluster provisioned (see [Terraform section](#12-terraform--cloud-provisioning))
 - `kubectl` configured: `aws eks update-kubeconfig --region us-east-1 --name poly-orchestrator-production`
 - GHCR image pushed by CI
+- Kubernetes secret created (see step below — run once per cluster)
 
-### First-time setup
+### Create the secret (one-time, before first deploy)
 
 ```bash
-# 1. Create namespace
-kubectl apply -f infra/k8s/namespace.yaml
-
-# 2. Create secrets (NEVER commit the real file)
+# NEVER commit the real values. Run this kubectl command directly:
 kubectl create secret generic poly-orchestrator-secrets \
   --from-literal=DATABASE_URL='postgresql+asyncpg://poly:PASS@rds-endpoint:5432/poly_orchestrator' \
   --from-literal=REDIS_URL='redis://elasticache-endpoint:6379/0' \
@@ -405,41 +457,42 @@ kubectl create secret generic poly-orchestrator-secrets \
   --from-literal=PERPLEXITY_API_KEY='pplx-...' \
   --from-literal=GROQ_API_KEY='gsk_...' \
   -n poly-orchestrator
-
-# 3. Apply all manifests
-kubectl apply -f infra/k8s/
-
-# 4. Run database migrations as a one-off Job
-kubectl run migrate --image=ghcr.io/ayamigah16/poly-ochestrator-challenge:latest \
-  --restart=Never --rm -it -n poly-orchestrator \
-  --env-from=secret/poly-orchestrator-secrets \
-  --env-from=configmap/poly-orchestrator-config \
-  -- alembic upgrade head
-
-# 5. Verify pods are healthy
-kubectl get pods -n poly-orchestrator
-kubectl describe pod -n poly-orchestrator -l app=poly-orchestrator
 ```
 
-### Deploy a new image version
+### Deploy (first-time and rolling updates — same command)
 
 ```bash
-# Update the image tag in the deployment (or use Helm / ArgoCD)
-kubectl set image deployment/poly-orchestrator \
-  app=ghcr.io/ayamigah16/poly-ochestrator-challenge:v0.2.0 \
-  -n poly-orchestrator
+# First-time or update to a specific image tag:
+./scripts/k8s-deploy.sh --image ghcr.io/ayamigah16/poly-ochestrator-challenge:v0.2.0
 
-# Watch the rolling update
-kubectl rollout status deployment/poly-orchestrator -n poly-orchestrator
+# Dry-run to preview what will change without applying:
+./scripts/k8s-deploy.sh --image ghcr.io/ayamigah16/poly-ochestrator-challenge:v0.2.0 --dry-run
+
+# Skip migrations (e.g. config-only change with no schema change):
+./scripts/k8s-deploy.sh --image ghcr.io/ayamigah16/poly-ochestrator-challenge:v0.2.0 --skip-migrate
 ```
+
+The script applies all manifests, runs the migration job, watches the rollout, and runs a port-forward smoke test. It exits non-zero if the rollout does not complete within 300s.
 
 ### Roll back a bad deploy
 
 ```bash
-# Instant rollback to previous revision
-kubectl rollout undo deployment/poly-orchestrator -n poly-orchestrator
+./scripts/k8s-rollback.sh              # roll back to previous revision (with confirmation)
+./scripts/k8s-rollback.sh --list       # list available revisions first
+./scripts/k8s-rollback.sh --revision 3 # roll back to a specific revision
+```
 
-# Roll back to a specific revision
+### Manual Kubernetes commands (reference)
+
+```bash
+# Apply all manifests individually
+kubectl apply -f infra/k8s/
+
+# Watch rollout
+kubectl rollout status deployment/poly-orchestrator -n poly-orchestrator
+
+# Manual rollback
+kubectl rollout undo deployment/poly-orchestrator -n poly-orchestrator
 kubectl rollout history deployment/poly-orchestrator -n poly-orchestrator
 kubectl rollout undo deployment/poly-orchestrator --to-revision=3 -n poly-orchestrator
 ```
@@ -479,55 +532,35 @@ kubectl exec -it -n poly-orchestrator \
 ### State backend (one-time, before first `terraform init`)
 
 ```bash
-# Create S3 bucket for state
-aws s3api create-bucket \
-  --bucket poly-orchestrator-tf-state \
-  --region us-east-1
-
-aws s3api put-bucket-versioning \
-  --bucket poly-orchestrator-tf-state \
-  --versioning-configuration Status=Enabled
-
-aws s3api put-bucket-encryption \
-  --bucket poly-orchestrator-tf-state \
-  --server-side-encryption-configuration \
-  '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
-
-# Create DynamoDB lock table
-aws dynamodb create-table \
-  --table-name poly-orchestrator-tf-lock \
-  --attribute-definitions AttributeName=LockID,AttributeType=S \
-  --key-schema AttributeName=LockID,KeyType=HASH \
-  --billing-mode PAY_PER_REQUEST \
-  --region us-east-1
+./scripts/terraform-bootstrap.sh                          # defaults: us-east-1, prefix poly-orchestrator
+./scripts/terraform-bootstrap.sh --region eu-west-1       # different region
+./scripts/terraform-bootstrap.sh --prefix my-project      # different name prefix
 ```
+
+The script creates the S3 bucket (versioned, AES-256 encrypted, public access blocked) and the DynamoDB lock table, then prints the exact `backend "s3" {}` block to paste into `infra/terraform/main.tf`. Safe to re-run — every AWS call is idempotent.
 
 ### Plan and apply
 
 ```bash
-cd infra/terraform
-
-terraform init
-
-# Dry run
-terraform plan \
-  -var="environment=production" \
-  -var="db_password=$DB_PASSWORD" \
-  -out=tfplan
-
-# Review plan, then apply
-terraform apply tfplan
+./scripts/terraform-apply.sh --env staging                            # plan → confirm → apply
+./scripts/terraform-apply.sh --env production --db-password "$DB_PW"  # pass password directly
+./scripts/terraform-apply.sh --env staging --plan-only                 # preview without applying
+./scripts/terraform-apply.sh --env staging --destroy                   # tear down (non-production only)
 ```
 
-### Destroy (non-production only)
+The script always shows the plan and requires confirmation before applying. It refuses to auto-destroy the production environment.
+
+### Manual Terraform commands (reference)
 
 ```bash
-terraform destroy \
-  -var="environment=staging" \
-  -var="db_password=$DB_PASSWORD"
+cd infra/terraform
+terraform init
+terraform plan -var="environment=staging" -var="db_password=$DB_PASSWORD" -out=tfplan
+terraform apply tfplan
+terraform output                           # show outputs (RDS endpoint, EKS cluster name, etc.)
 ```
 
-> **Never run `destroy` against production without explicit approval.**
+> **Never run `terraform destroy` against production without explicit approval.**
 
 ---
 
@@ -611,22 +644,31 @@ groups:
 
 ### Triggering a release
 
-CI/CD handles all release mechanics. To cut a release:
-
 ```bash
-# On main branch, after all PRs are merged and CI is green
-git checkout main
-git pull origin main
-
-# Tag with semantic version
-git tag -a v0.2.0 -m "Release v0.2.0: add competitor trend chart"
-git push origin v0.2.0
+./scripts/release.sh 0.2.0
+./scripts/release.sh 0.2.0 --message "add competitor trend chart"
+./scripts/release.sh 0.2.0 --dry-run   # validate only — no tag or push
 ```
 
-This triggers `release.yml` which:
+The script validates that you are on `main`, the working tree is clean, local is in sync with `origin/main`, the tag does not already exist, and tests pass — then creates and pushes the annotated tag, triggering `release.yml`.
+
+`release.yml` then:
 1. Builds the production Docker image
 2. Pushes with `v0.2.0`, `0.2`, and `latest` tags to GHCR
 3. Generates a GitHub Release with changelog and image digest
+
+Monitor the pipeline:
+
+```bash
+gh run list --workflow release.yml
+```
+
+Deploy the published image to production:
+
+```bash
+./scripts/k8s-deploy.sh --image ghcr.io/ayamigah16/poly-ochestrator-challenge:v0.2.0
+./scripts/smoke-test.sh --url https://your-prod-url
+```
 
 ### Checking the published image
 
@@ -647,7 +689,7 @@ docker run --rm ghcr.io/ayamigah16/poly-ochestrator-challenge:v0.2.0 --version
 4. Verify secrets are present: `kubectl get secret poly-orchestrator-secrets -n poly-orchestrator`
 5. Check Prometheus `orchestrator_adapter_errors_total` — is it one adapter or all?
 6. If all: check whether `DATABASE_URL` or `REDIS_URL` are reachable from the pod
-7. Roll back if a recent deploy caused the regression: `kubectl rollout undo deployment/poly-orchestrator -n poly-orchestrator`
+7. Roll back if a recent deploy caused the regression: `./scripts/k8s-rollback.sh`
 
 ---
 
@@ -716,7 +758,7 @@ Symptom: `redis.exceptions.ResponseError: OOM command not allowed when used memo
 ### Workflow triggers
 
 | Workflow | File | Triggers |
-|---|---|---|
+| --- | --- | --- |
 | CI | `ci.yml` | Push to `main`, `develop`, `feature/**`; PR to `main`/`develop` |
 | Security | `security.yml` | Push to `main`/`develop`; PR to `main`/`develop`; nightly 02:00 UTC |
 | Release | `release.yml` | Push of tag matching `v*.*.*` |
@@ -724,7 +766,7 @@ Symptom: `redis.exceptions.ResponseError: OOM command not allowed when used memo
 ### Required GitHub Secrets
 
 | Secret | Used by |
-|---|---|
+| --- | --- |
 | `GITHUB_TOKEN` | All workflows (auto-provided by Actions) |
 | `CODECOV_TOKEN` | `ci.yml` — coverage upload |
 
@@ -741,6 +783,18 @@ Go to **Actions → \<workflow run\> → Re-run failed jobs**. Do not re-run sec
 ## 17. Common Commands Cheat-Sheet
 
 ```bash
+# ── Deployment scripts ─────────────────────────────────────────────────────────
+./scripts/setup-local.sh                   # full local bootstrap
+./scripts/compose-deploy.sh                # Docker Compose full deploy
+./scripts/compose-deploy.sh --rebuild      # force image rebuild
+./scripts/k8s-deploy.sh --image <tag>      # Kubernetes deploy / rolling update
+./scripts/k8s-rollback.sh                  # instant K8s rollback
+./scripts/terraform-bootstrap.sh           # one-time S3 + DynamoDB state setup
+./scripts/terraform-apply.sh --env staging # Terraform plan + apply
+./scripts/release.sh 0.2.0                 # cut a release (validate → tag → push)
+./scripts/smoke-test.sh                    # post-deploy health + API check
+./scripts/smoke-test.sh --url https://...  # smoke test a remote environment
+
 # ── Local dev ──────────────────────────────────────────────────────────────────
 pip install -e ".[dev]"                    # install with dev deps
 uvicorn poly_orchestrator.main:app --reload  # run with hot-reload
