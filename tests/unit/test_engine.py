@@ -21,6 +21,8 @@ def make_mock_settings(adapters: list[str] | None = None) -> MagicMock:
     s.perplexity_model = "sonar-pro"
     s.groq_api_key = ""
     s.groq_model = "llama-3.3-70b-versatile"
+    s.mistral_api_key = ""
+    s.mistral_model = "mistral-large-latest"
     s.orchestrator_timeout_seconds = 30
     s.orchestrator_max_concurrency = 10
     return s

@@ -367,7 +367,9 @@ Copy `.env.example` to `.env` and populate. Never commit `.env`.
 | `PERPLEXITY_MODEL` | `sonar-pro` | | Model to use |
 | `GROQ_API_KEY` | | Yes* | Groq API key (`gsk_…`) |
 | `GROQ_MODEL` | `llama-3.3-70b-versatile` | | Model to use |
-| `ENABLED_ADAPTERS` | `openai,anthropic,google,perplexity,groq` | | Comma-separated adapter list |
+| `MISTRAL_API_KEY` | | Yes* | Mistral API key |
+| `MISTRAL_MODEL` | `mistral-large-latest` | | Model to use |
+| `ENABLED_ADAPTERS` | `openai,anthropic,google,perplexity,groq,mistral` | | Comma-separated adapter list |
 | `ORCHESTRATOR_TIMEOUT_SECONDS` | `30` | | Per-adapter HTTP timeout |
 | `ORCHESTRATOR_MAX_CONCURRENCY` | `10` | | Max simultaneous adapter calls |
 | `PROMETHEUS_ENABLED` | `true` | | Set `false` to disable `/metrics` |
@@ -456,6 +458,7 @@ kubectl create secret generic poly-orchestrator-secrets \
   --from-literal=GOOGLE_API_KEY='AIza...' \
   --from-literal=PERPLEXITY_API_KEY='pplx-...' \
   --from-literal=GROQ_API_KEY='gsk_...' \
+  --from-literal=MISTRAL_API_KEY='...' \
   -n poly-orchestrator
 ```
 

@@ -50,8 +50,12 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     groq_model: str = "llama-3.3-70b-versatile"
 
+    # Mistral
+    mistral_api_key: str = ""
+    mistral_model: str = "mistral-large-latest"
+
     # Orchestrator
-    enabled_adapters: str = "openai,anthropic,google,perplexity,groq"
+    enabled_adapters: str = "openai,anthropic,google,perplexity,groq,mistral"
     orchestrator_timeout_seconds: int = 30
     orchestrator_max_concurrency: int = 10
 

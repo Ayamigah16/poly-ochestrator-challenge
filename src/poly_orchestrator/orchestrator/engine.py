@@ -63,6 +63,7 @@ class OrchestratorEngine:
             "google": {"api_key": s.google_api_key, "model": s.google_model},
             "perplexity": {"api_key": s.perplexity_api_key, "model": s.perplexity_model},
             "groq": {"api_key": s.groq_api_key, "model": s.groq_model},
+            "mistral": {"api_key": s.mistral_api_key, "model": s.mistral_model},
         }
         adapters = {}
         for name in s.enabled_adapter_list:
