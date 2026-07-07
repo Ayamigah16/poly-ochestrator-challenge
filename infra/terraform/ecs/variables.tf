@@ -78,3 +78,19 @@ variable "mistral_api_key" {
   type        = string
   sensitive   = true
 }
+
+variable "acm_certificate_arn" {
+  description = "ACM certificate ARN for the HTTPS listener. Request a free cert at https://console.aws.amazon.com/acm/"
+  type        = string
+
+  validation {
+    condition     = can(regex("^arn:aws:acm:", var.acm_certificate_arn))
+    error_message = "acm_certificate_arn must be a valid ACM ARN (arn:aws:acm:...)."
+  }
+}
+
+variable "alb_access_logs_bucket" {
+  description = "S3 bucket name for ALB access logs (leave empty to disable logging)"
+  type        = string
+  default     = ""
+}

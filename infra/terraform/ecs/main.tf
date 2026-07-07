@@ -240,7 +240,7 @@ resource "aws_db_subnet_group" "main" {
 resource "aws_db_instance" "postgres" {
   identifier            = local.name
   engine                = "postgres"
-  engine_version        = "15.8"
+  engine_version        = "15"
   instance_class        = var.db_instance_class
   allocated_storage     = 20
   max_allocated_storage = 100
@@ -288,6 +288,11 @@ resource "aws_lb" "app" {
   security_groups    = [aws_security_group.alb.id]
   subnets            = module.vpc.public_subnets
 
+  access_logs {
+    bucket  = var.alb_access_logs_bucket
+    enabled = var.alb_access_logs_bucket != ""
+  }
+
   tags = local.common_tags
 }
 
@@ -310,10 +315,29 @@ resource "aws_lb_target_group" "app" {
   tags = local.common_tags
 }
 
+# HTTP → HTTPS permanent redirect (always present; never forwards plain text)
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.app.arn
   port              = 80
   protocol          = "HTTP"
+
+  default_action {
+    type = "redirect"
+    redirect {
+      port        = "443"
+      protocol    = "HTTPS"
+      status_code = "HTTP_301"
+    }
+  }
+}
+
+# HTTPS listener — forwards traffic to ECS tasks
+resource "aws_lb_listener" "https" {
+  load_balancer_arn = aws_lb.app.arn
+  port              = 443
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+  certificate_arn   = var.acm_certificate_arn
 
   default_action {
     type             = "forward"
@@ -438,7 +462,7 @@ resource "aws_ecs_service" "app" {
     type = "ECS"
   }
 
-  depends_on = [aws_lb_listener.http]
+  depends_on = [aws_lb_listener.http, aws_lb_listener.https]
 
   tags = local.common_tags
 }

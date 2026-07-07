@@ -4,20 +4,25 @@
 #
 # Usage:
 #   ./scripts/terraform-apply.sh --env staging --platform eks
-#   ./scripts/terraform-apply.sh --env staging --platform ecs
+#   ./scripts/terraform-apply.sh --env staging --platform ecs --acm-cert arn:aws:acm:eu-west-1:...
 #   ./scripts/terraform-apply.sh --env production --db-password "$DB_PASS"
 #   ./scripts/terraform-apply.sh --env staging --plan-only    # plan but do not apply
 #   ./scripts/terraform-apply.sh --env staging --destroy      # DANGEROUS: tear down
 #
 # Platforms:
 #   eks  (default) → infra/terraform/      VPC + EKS + RDS + ElastiCache
-#   ecs            → infra/terraform/ecs/  VPC + ECR + ECS Fargate + ALB + RDS + ElastiCache
+#   ecs            → infra/terraform/ecs/  VPC + ECR + ECS Fargate + HTTPS ALB + RDS + ElastiCache
+#
+# ECS requires an ACM certificate (free): https://console.aws.amazon.com/acm/
+#   aws acm request-certificate --domain-name api.yourdomain.com \
+#     --validation-method DNS --region eu-west-1
 
 source "$(dirname "$0")/lib.sh"
 
 ENVIRONMENT=""
 PLATFORM="eks"
 DB_PASSWORD="${DB_PASSWORD:-}"
+ACM_CERT_ARN="${ACM_CERT_ARN:-}"
 PLAN_ONLY=false
 DESTROY=false
 
@@ -26,6 +31,7 @@ while [[ $# -gt 0 ]]; do
     --env)          ENVIRONMENT="$2";   shift 2 ;;
     --platform)     PLATFORM="$2";      shift 2 ;;
     --db-password)  DB_PASSWORD="$2";   shift 2 ;;
+    --acm-cert)     ACM_CERT_ARN="$2";  shift 2 ;;
     --plan-only)    PLAN_ONLY=true;     shift   ;;
     --destroy)      DESTROY=true;       shift   ;;
     --help|-h)
@@ -86,6 +92,12 @@ TF_VAR_ARGS=(
   -var "environment=$ENVIRONMENT"
   -var "db_password=$DB_PASSWORD"
 )
+if [[ "$PLATFORM" == "ecs" ]]; then
+  [[ -z "$ACM_CERT_ARN" ]] && \
+    read -r -p "$(echo -e "${YELLOW}Enter ACM certificate ARN (arn:aws:acm:...): ${RESET}")" ACM_CERT_ARN
+  [[ -z "$ACM_CERT_ARN" ]] && die "ACM certificate ARN is required for ECS (--acm-cert or ACM_CERT_ARN env var)"
+  TF_VAR_ARGS+=(-var "acm_certificate_arn=$ACM_CERT_ARN")
+fi
 
 if [[ "$DESTROY" == "true" ]]; then
   warn "DESTROY MODE — this will tear down all infrastructure in '$ENVIRONMENT'"

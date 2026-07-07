@@ -75,7 +75,7 @@ module "eks" {
 resource "aws_db_instance" "postgres" {
   identifier           = "poly-orchestrator-${var.environment}"
   engine               = "postgres"
-  engine_version       = "15.8"
+  engine_version       = "15"
   instance_class       = var.db_instance_class
   allocated_storage    = 20
   max_allocated_storage = 100
