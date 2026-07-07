@@ -80,13 +80,9 @@ variable "mistral_api_key" {
 }
 
 variable "acm_certificate_arn" {
-  description = "ACM certificate ARN for the HTTPS listener. Request a free cert at https://console.aws.amazon.com/acm/"
+  description = "ACM certificate ARN to enable an HTTPS listener (optional; HTTP-only when empty)"
   type        = string
-
-  validation {
-    condition     = can(regex("^arn:aws:acm:", var.acm_certificate_arn))
-    error_message = "acm_certificate_arn must be a valid ACM ARN (arn:aws:acm:...)."
-  }
+  default     = ""
 }
 
 variable "alb_access_logs_bucket" {

@@ -92,10 +92,7 @@ TF_VAR_ARGS=(
   -var "environment=$ENVIRONMENT"
   -var "db_password=$DB_PASSWORD"
 )
-if [[ "$PLATFORM" == "ecs" ]]; then
-  [[ -z "$ACM_CERT_ARN" ]] && \
-    read -r -p "$(echo -e "${YELLOW}Enter ACM certificate ARN (arn:aws:acm:...): ${RESET}")" ACM_CERT_ARN
-  [[ -z "$ACM_CERT_ARN" ]] && die "ACM certificate ARN is required for ECS (--acm-cert or ACM_CERT_ARN env var)"
+if [[ "$PLATFORM" == "ecs" && -n "$ACM_CERT_ARN" ]]; then
   TF_VAR_ARGS+=(-var "acm_certificate_arn=$ACM_CERT_ARN")
 fi
 
