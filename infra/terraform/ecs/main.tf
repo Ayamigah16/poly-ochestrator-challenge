@@ -8,11 +8,11 @@ terraform {
   }
 
   backend "s3" {
-    bucket         = "poly-orchestrator-tf-state"
-    key            = "ecs/terraform.tfstate"
-    region         = "us-east-1"
-    encrypt        = true
-    dynamodb_table = "poly-orchestrator-tf-lock"
+    bucket       = "poly-orchestrator-tf-state"
+    key          = "ecs/terraform.tfstate"
+    region       = "eu-west-1"
+    encrypt      = true
+    use_lockfile = true
   }
 }
 

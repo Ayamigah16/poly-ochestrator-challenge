@@ -9,7 +9,7 @@
 
 source "$(dirname "$0")/lib.sh"
 
-AWS_REGION="us-east-1"
+AWS_REGION="eu-west-1"
 PREFIX="poly-orchestrator"
 
 while [[ $# -gt 0 ]]; do

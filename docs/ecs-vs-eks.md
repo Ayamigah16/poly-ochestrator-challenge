@@ -80,7 +80,7 @@ Internet
 
 ## Cost Model
 
-Costs below are illustrative for 2 replicas running continuously in `us-east-1`.
+Costs below are illustrative for 2 replicas running continuously in `eu-west-1`.
 
 ### ECS Fargate (this project: 0.5 vCPU / 1 GB per task)
 
@@ -116,7 +116,7 @@ Costs below are illustrative for 2 replicas running continuously in `us-east-1`.
 
 ```bash
 # 1. Push image to ECR
-aws ecr get-login-password --region us-east-1 \
+aws ecr get-login-password --region eu-west-1 \
   | docker login --username AWS --password-stdin <ecr-url>
 docker tag poly-orchestrator:local <ecr-url>:latest
 docker push <ecr-url>:latest

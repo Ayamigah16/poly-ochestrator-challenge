@@ -125,13 +125,13 @@ echo ""
 if [[ "$DESTROY" == "false" ]]; then
   if [[ "$PLATFORM" == "eks" ]]; then
     echo "  Next steps (EKS):"
-    echo "    aws eks update-kubeconfig --region us-east-1 --name poly-orchestrator-${ENVIRONMENT}"
+    echo "    aws eks update-kubeconfig --region eu-west-1 --name poly-orchestrator-${ENVIRONMENT}"
     echo "    ./scripts/k8s-deploy.sh --image <ecr-url>:latest"
   else
     echo "  Next steps (ECS):"
     ECR_URL=$(terraform output -raw ecr_repository_url 2>/dev/null || echo "<ecr-url>")
     echo "    # Push image to ECR"
-    echo "    aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $ECR_URL"
+    echo "    aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin $ECR_URL"
     echo "    docker tag poly-orchestrator:local $ECR_URL:latest"
     echo "    docker push $ECR_URL:latest"
     echo ""
