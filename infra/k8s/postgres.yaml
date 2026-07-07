@@ -32,10 +32,13 @@ spec:
           env:
             - name: POSTGRES_USER
               value: poly
-            - name: POSTGRES_PASSWORD
-              value: poly_pass
             - name: POSTGRES_DB
               value: poly_orchestrator
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: poly-orchestrator-secrets
+                  key: DB_PASSWORD
           ports:
             - containerPort: 5432
           readinessProbe:

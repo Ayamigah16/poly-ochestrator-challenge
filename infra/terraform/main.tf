@@ -71,49 +71,7 @@ module "eks" {
   tags = local.common_tags
 }
 
-# ── RDS PostgreSQL ─────────────────────────────────────────────────────────────
-resource "aws_db_instance" "postgres" {
-  identifier           = "poly-orchestrator-${var.environment}"
-  engine               = "postgres"
-  engine_version       = "15"
-  instance_class       = var.db_instance_class
-  allocated_storage    = 20
-  max_allocated_storage = 100
-  storage_encrypted    = true
-
-  db_name  = "poly_orchestrator"
-  username = "poly"
-  password = var.db_password
-
-  vpc_security_group_ids = [aws_security_group.rds.id]
-  db_subnet_group_name   = aws_db_subnet_group.main.name
-
-  backup_retention_period = 7
-  deletion_protection     = var.environment == "production"
-  skip_final_snapshot     = var.environment != "production"
-
-  tags = local.common_tags
-}
-
-resource "aws_db_subnet_group" "main" {
-  name       = "poly-orchestrator-${var.environment}"
-  subnet_ids = module.vpc.private_subnets
-  tags       = local.common_tags
-}
-
-resource "aws_security_group" "rds" {
-  name   = "poly-orchestrator-rds-${var.environment}"
-  vpc_id = module.vpc.vpc_id
-
-  ingress {
-    from_port       = 5432
-    to_port         = 5432
-    protocol        = "tcp"
-    security_groups = [module.eks.cluster_security_group_id]
-  }
-
-  tags = local.common_tags
-}
+# PostgreSQL runs as a container via infra/k8s/postgres.yaml (deployed by k8s-deploy.sh)
 
 # ── ElastiCache Redis ─────────────────────────────────────────────────────────
 resource "aws_elasticache_cluster" "redis" {

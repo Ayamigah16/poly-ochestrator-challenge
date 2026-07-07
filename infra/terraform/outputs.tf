@@ -9,10 +9,9 @@ output "eks_cluster_endpoint" {
   sensitive   = true
 }
 
-output "rds_endpoint" {
-  description = "RDS PostgreSQL endpoint"
-  value       = aws_db_instance.postgres.endpoint
-  sensitive   = true
+output "postgres_dns" {
+  description = "PostgreSQL k8s service DNS (in-cluster: postgres.poly-orchestrator.svc.cluster.local:5432)"
+  value       = "postgres.poly-orchestrator.svc.cluster.local:5432"
 }
 
 output "redis_endpoint" {

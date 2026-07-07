@@ -96,10 +96,11 @@ resource "aws_secretsmanager_secret" "app" {
 resource "aws_secretsmanager_secret_version" "app" {
   secret_id = aws_secretsmanager_secret.app.id
   secret_string = jsonencode({
-    DATABASE_URL    = "postgresql+asyncpg://poly:${var.db_password}@${aws_db_instance.postgres.endpoint}/poly_orchestrator"
+    DATABASE_URL    = "postgresql+asyncpg://poly:${var.db_password}@postgres.poly.local:5432/poly_orchestrator"
     REDIS_URL       = "redis://${aws_elasticache_cluster.redis.cache_nodes[0].address}:6379/0"
     APP_SECRET_KEY  = var.app_secret_key
     MISTRAL_API_KEY = var.mistral_api_key
+    DB_PASSWORD     = var.db_password
   })
 }
 
@@ -202,8 +203,9 @@ resource "aws_security_group" "ecs_tasks" {
   tags = local.common_tags
 }
 
-resource "aws_security_group" "rds" {
-  name   = "${local.name}-rds"
+# Port 5432 inbound from the app tasks only
+resource "aws_security_group" "ecs_postgres" {
+  name   = "${local.name}-ecs-postgres"
   vpc_id = module.vpc.vpc_id
 
   ingress {
@@ -211,6 +213,28 @@ resource "aws_security_group" "rds" {
     to_port         = 5432
     protocol        = "tcp"
     security_groups = [aws_security_group.ecs_tasks.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = local.common_tags
+}
+
+# NFS (port 2049) inbound from the postgres container only
+resource "aws_security_group" "efs" {
+  name   = "${local.name}-efs"
+  vpc_id = module.vpc.vpc_id
+
+  ingress {
+    from_port       = 2049
+    to_port         = 2049
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ecs_postgres.id]
   }
 
   tags = local.common_tags
@@ -230,32 +254,161 @@ resource "aws_security_group" "redis" {
   tags = local.common_tags
 }
 
-# ── RDS PostgreSQL ─────────────────────────────────────────────────────────────
-resource "aws_db_subnet_group" "main" {
-  name       = local.name
-  subnet_ids = module.vpc.private_subnets
-  tags       = local.common_tags
+# ── Cloud Map (service discovery for postgres.poly.local) ─────────────────────
+resource "aws_service_discovery_private_dns_namespace" "main" {
+  name        = "poly.local"
+  vpc         = module.vpc.vpc_id
+  description = "Private DNS namespace for ECS service discovery"
+  tags        = local.common_tags
 }
 
-resource "aws_db_instance" "postgres" {
-  identifier            = local.name
-  engine                = "postgres"
-  engine_version        = "15"
-  instance_class        = var.db_instance_class
-  allocated_storage     = 20
-  max_allocated_storage = 100
-  storage_encrypted     = true
+resource "aws_service_discovery_service" "postgres" {
+  name = "postgres"
 
-  db_name  = "poly_orchestrator"
-  username = "poly"
-  password = var.db_password
+  dns_config {
+    namespace_id = aws_service_discovery_private_dns_namespace.main.id
+    dns_records {
+      ttl  = 10
+      type = "A"
+    }
+    routing_policy = "MULTIVALUE"
+  }
 
-  vpc_security_group_ids = [aws_security_group.rds.id]
-  db_subnet_group_name   = aws_db_subnet_group.main.name
+  health_check_custom_config {
+    failure_threshold = 1
+  }
 
-  backup_retention_period = 7
-  deletion_protection     = var.environment == "production"
-  skip_final_snapshot     = var.environment != "production"
+  tags = local.common_tags
+}
+
+# ── EFS — persistent storage for PostgreSQL data ──────────────────────────────
+resource "aws_efs_file_system" "postgres" {
+  creation_token = "${local.name}-postgres"
+  encrypted      = true
+  tags           = merge(local.common_tags, { Name = "${local.name}-postgres-efs" })
+}
+
+resource "aws_efs_access_point" "postgres" {
+  file_system_id = aws_efs_file_system.postgres.id
+
+  posix_user {
+    gid = 999
+    uid = 999
+  }
+
+  root_directory {
+    path = "/pgdata"
+    creation_info {
+      owner_gid   = 999
+      owner_uid   = 999
+      permissions = "750"
+    }
+  }
+
+  tags = local.common_tags
+}
+
+resource "aws_efs_mount_target" "postgres" {
+  for_each = toset(module.vpc.private_subnets)
+
+  file_system_id  = aws_efs_file_system.postgres.id
+  subnet_id       = each.value
+  security_groups = [aws_security_group.efs.id]
+}
+
+# ── PostgreSQL container — ECS task + service ──────────────────────────────────
+resource "aws_ecs_task_definition" "postgres" {
+  family                   = "${local.name}-postgres"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = 256
+  memory                   = 512
+  execution_role_arn       = aws_iam_role.ecs_execution.arn
+
+  container_definitions = jsonencode([{
+    name      = "postgres"
+    image     = var.postgres_image
+    essential = true
+
+    portMappings = [{
+      containerPort = 5432
+      protocol      = "tcp"
+    }]
+
+    environment = [
+      { name = "POSTGRES_USER", value = "poly" },
+      { name = "POSTGRES_DB",   value = "poly_orchestrator" },
+      { name = "PGDATA",        value = "/var/lib/postgresql/data/pgdata" },
+    ]
+
+    secrets = [
+      { name = "POSTGRES_PASSWORD", valueFrom = "${aws_secretsmanager_secret.app.arn}:DB_PASSWORD::" },
+    ]
+
+    mountPoints = [{
+      sourceVolume  = "postgres-data"
+      containerPath = "/var/lib/postgresql/data"
+      readOnly      = false
+    }]
+
+    healthCheck = {
+      command     = ["CMD-SHELL", "pg_isready -U poly -d poly_orchestrator || exit 1"]
+      interval    = 10
+      timeout     = 5
+      retries     = 5
+      startPeriod = 30
+    }
+
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = aws_cloudwatch_log_group.app.name
+        "awslogs-region"        = var.aws_region
+        "awslogs-stream-prefix" = "postgres"
+      }
+    }
+  }])
+
+  volume {
+    name = "postgres-data"
+
+    efs_volume_configuration {
+      file_system_id     = aws_efs_file_system.postgres.id
+      transit_encryption = "ENABLED"
+
+      authorization_config {
+        access_point_id = aws_efs_access_point.postgres.id
+        iam             = "DISABLED"
+      }
+    }
+  }
+
+  tags = local.common_tags
+}
+
+resource "aws_ecs_service" "postgres" {
+  name            = "${local.name}-postgres"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.postgres.arn
+  desired_count   = 1
+
+  capacity_provider_strategy {
+    capacity_provider = "FARGATE"
+    weight            = 1
+    base              = 1
+  }
+
+  network_configuration {
+    subnets          = module.vpc.private_subnets
+    security_groups  = [aws_security_group.ecs_postgres.id]
+    assign_public_ip = false
+  }
+
+  service_registries {
+    registry_arn = aws_service_discovery_service.postgres.arn
+  }
+
+  depends_on = [aws_efs_mount_target.postgres]
 
   tags = local.common_tags
 }
@@ -462,7 +615,7 @@ resource "aws_ecs_service" "app" {
     type = "ECS"
   }
 
-  depends_on = [aws_lb_listener.http, aws_lb_listener.https]
+  depends_on = [aws_lb_listener.http, aws_lb_listener.https, aws_ecs_service.postgres]
 
   tags = local.common_tags
 }

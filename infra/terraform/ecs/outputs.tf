@@ -18,10 +18,9 @@ output "ecs_service_name" {
   value       = aws_ecs_service.app.name
 }
 
-output "rds_endpoint" {
-  description = "RDS PostgreSQL endpoint"
-  value       = aws_db_instance.postgres.endpoint
-  sensitive   = true
+output "postgres_dns" {
+  description = "PostgreSQL service discovery DNS (reachable from within the VPC)"
+  value       = "postgres.poly.local:5432"
 }
 
 output "redis_endpoint" {

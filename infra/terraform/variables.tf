@@ -19,12 +19,6 @@ variable "node_instance_type" {
   default     = "t3.medium"
 }
 
-variable "db_instance_class" {
-  description = "RDS instance class"
-  type        = string
-  default     = "db.t3.micro"
-}
-
 variable "db_password" {
   description = "RDS master password (inject via TF_VAR or secrets manager)"
   type        = string

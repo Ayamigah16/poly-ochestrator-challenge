@@ -49,10 +49,10 @@ variable "max_capacity" {
   default     = 10
 }
 
-variable "db_instance_class" {
-  description = "RDS instance class"
+variable "postgres_image" {
+  description = "PostgreSQL container image"
   type        = string
-  default     = "db.t3.micro"
+  default     = "postgres:15-alpine"
 }
 
 variable "db_password" {
