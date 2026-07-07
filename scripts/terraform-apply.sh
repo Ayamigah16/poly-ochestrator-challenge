@@ -3,31 +3,43 @@
 # Always shows a plan first; requires explicit confirmation before apply.
 #
 # Usage:
-#   ./scripts/terraform-apply.sh --env staging
+#   ./scripts/terraform-apply.sh --env staging --platform eks
+#   ./scripts/terraform-apply.sh --env staging --platform ecs
 #   ./scripts/terraform-apply.sh --env production --db-password "$DB_PASS"
-#   ./scripts/terraform-apply.sh --env staging --plan-only   # plan but do not apply
-#   ./scripts/terraform-apply.sh --env staging --destroy     # DANGEROUS: tear down
+#   ./scripts/terraform-apply.sh --env staging --plan-only    # plan but do not apply
+#   ./scripts/terraform-apply.sh --env staging --destroy      # DANGEROUS: tear down
+#
+# Platforms:
+#   eks  (default) → infra/terraform/      VPC + EKS + RDS + ElastiCache
+#   ecs            → infra/terraform/ecs/  VPC + ECR + ECS Fargate + ALB + RDS + ElastiCache
 
 source "$(dirname "$0")/lib.sh"
 
 ENVIRONMENT=""
+PLATFORM="eks"
 DB_PASSWORD="${DB_PASSWORD:-}"
 PLAN_ONLY=false
 DESTROY=false
-TF_DIR="$REPO_ROOT/infra/terraform"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --env)          ENVIRONMENT="$2";   shift 2 ;;
+    --platform)     PLATFORM="$2";      shift 2 ;;
     --db-password)  DB_PASSWORD="$2";   shift 2 ;;
     --plan-only)    PLAN_ONLY=true;     shift   ;;
     --destroy)      DESTROY=true;       shift   ;;
     --help|-h)
-      grep '^#' "$0" | head -10 | sed 's/^# \?//'
+      grep '^#' "$0" | head -14 | sed 's/^# \?//'
       exit 0 ;;
     *) die "Unknown argument: $1" ;;
   esac
 done
+
+case "$PLATFORM" in
+  eks) TF_DIR="$REPO_ROOT/infra/terraform"     ;;
+  ecs) TF_DIR="$REPO_ROOT/infra/terraform/ecs" ;;
+  *)   die "--platform must be 'eks' or 'ecs'" ;;
+esac
 
 [[ -z "$ENVIRONMENT" ]] && die "--env is required (development | staging | production)"
 
@@ -56,9 +68,10 @@ fi
 # ── AWS identity ───────────────────────────────────────────────────────────────
 step "AWS identity"
 CALLER=$(aws sts get-caller-identity --output json 2>/dev/null)
-info "Account: $(echo "$CALLER" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["Account"])')"
-info "ARN:     $(echo "$CALLER" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["Arn"])')"
-info "Env:     $ENVIRONMENT"
+info "Account:  $(echo "$CALLER" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["Account"])')"
+info "ARN:      $(echo "$CALLER" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["Arn"])')"
+info "Env:      $ENVIRONMENT"
+info "Platform: $PLATFORM  ($TF_DIR)"
 
 # ── Init ───────────────────────────────────────────────────────────────────────
 step "terraform init"
@@ -110,7 +123,29 @@ echo -e "${GREEN}${BOLD}  Terraform apply complete!${RESET}"
 echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 echo ""
 if [[ "$DESTROY" == "false" ]]; then
-  echo "  Next: configure kubectl and deploy the app"
-  echo "    aws eks update-kubeconfig --region us-east-1 --name poly-orchestrator-${ENVIRONMENT}"
-  echo "    ./scripts/k8s-deploy.sh --image ghcr.io/ayamigah16/poly-ochestrator-challenge:latest"
+  if [[ "$PLATFORM" == "eks" ]]; then
+    echo "  Next steps (EKS):"
+    echo "    aws eks update-kubeconfig --region us-east-1 --name poly-orchestrator-${ENVIRONMENT}"
+    echo "    ./scripts/k8s-deploy.sh --image <ecr-url>:latest"
+  else
+    echo "  Next steps (ECS):"
+    ECR_URL=$(terraform output -raw ecr_repository_url 2>/dev/null || echo "<ecr-url>")
+    echo "    # Push image to ECR"
+    echo "    aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $ECR_URL"
+    echo "    docker tag poly-orchestrator:local $ECR_URL:latest"
+    echo "    docker push $ECR_URL:latest"
+    echo ""
+    echo "    # Run migrations (one-shot Fargate task)"
+    echo "    aws ecs run-task --cluster poly-orchestrator-${ENVIRONMENT} \\"
+    echo "      --task-definition poly-orchestrator-${ENVIRONMENT} --launch-type FARGATE \\"
+    echo "      --network-configuration 'awsvpcConfiguration={subnets=[...],securityGroups=[...]}' \\"
+    echo "      --overrides '{\"containerOverrides\":[{\"name\":\"app\",\"command\":[\"python\",\"-m\",\"alembic\",\"upgrade\",\"head\"]}]}'"
+    echo ""
+    echo "    # Trigger rolling deploy"
+    echo "    aws ecs update-service --cluster poly-orchestrator-${ENVIRONMENT} \\"
+    echo "      --service poly-orchestrator-${ENVIRONMENT} --force-new-deployment"
+    ALB_URL=$(terraform output -raw alb_dns_name 2>/dev/null || echo "<alb-dns>")
+    echo ""
+    echo "  API: http://$ALB_URL"
+  fi
 fi
