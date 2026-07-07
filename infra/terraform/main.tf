@@ -75,7 +75,7 @@ module "eks" {
 
 # ── ElastiCache Redis ─────────────────────────────────────────────────────────
 resource "aws_elasticache_cluster" "redis" {
-  cluster_id           = "poly-${var.environment}"
+  cluster_id           = "poly-eks-${var.environment}"
   engine               = "redis"
   node_type            = var.redis_node_type
   num_cache_nodes      = 1
