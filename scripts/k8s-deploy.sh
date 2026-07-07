@@ -65,12 +65,10 @@ if [[ "$DRY_RUN" == "false" ]]; then
     echo "      --from-literal=DATABASE_URL='postgresql+asyncpg://...' \\"
     echo "      --from-literal=REDIS_URL='redis://...' \\"
     echo "      --from-literal=APP_SECRET_KEY='...' \\"
-    echo "      --from-literal=OPENAI_API_KEY='sk-...' \\"
-    echo "      --from-literal=ANTHROPIC_API_KEY='sk-ant-...' \\"
-    echo "      --from-literal=GOOGLE_API_KEY='AIza...' \\"
-    echo "      --from-literal=PERPLEXITY_API_KEY='pplx-...' \\"
-    echo "      --from-literal=GROQ_API_KEY='gsk_...' \\"
+    echo "      --from-literal=MISTRAL_API_KEY='...' \\"
     echo "      -n $NAMESPACE"
+    echo ""
+    echo "  (Add any other provider keys you have: OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)"
     exit 1
   fi
   success "Secret 'poly-orchestrator-secrets' found"
@@ -80,6 +78,8 @@ fi
 step "Applying Kubernetes manifests"
 MANIFESTS=(
   infra/k8s/namespace.yaml
+  infra/k8s/postgres.yaml
+  infra/k8s/redis.yaml
   infra/k8s/configmap.yaml
   infra/k8s/service.yaml
   infra/k8s/deployment.yaml
@@ -110,31 +110,47 @@ if [[ "$SKIP_MIGRATE" == "false" && "$DRY_RUN" == "false" ]]; then
   step "Running database migrations"
   MIGRATE_IMAGE="${IMAGE:-ghcr.io/ayamigah16/poly-ochestrator-challenge:latest}"
 
-  # Delete any previous migration pod
-  kubectl delete pod migrate-job -n "$NAMESPACE" --ignore-not-found
+  # Delete any previous migration job
+  kubectl delete job migrate-job -n "$NAMESPACE" --ignore-not-found --wait
 
-  kubectl run migrate-job \
-    --image="$MIGRATE_IMAGE" \
-    --restart=Never \
-    --namespace="$NAMESPACE" \
-    --env-from=secret/poly-orchestrator-secrets \
-    --env-from=configmap/poly-orchestrator-config \
-    -- alembic upgrade head
+  # Use a Job (not a raw Pod) so kubectl wait --for=condition=Complete works
+  kubectl apply -f - <<EOF
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate-job
+  namespace: ${NAMESPACE}
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: ${MIGRATE_IMAGE}
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "alembic", "upgrade", "head"]
+          envFrom:
+            - secretRef:
+                name: poly-orchestrator-secrets
+            - configMapRef:
+                name: poly-orchestrator-config
+EOF
 
-  info "Waiting for migration pod to complete..."
-  kubectl wait pod/migrate-job \
-    --for=condition=Succeeded \
+  info "Waiting for migration job to complete..."
+  kubectl wait job/migrate-job \
+    --for=condition=Complete \
     --timeout=120s \
     -n "$NAMESPACE" \
     || {
-      warn "Migration pod did not succeed — logs:"
-      kubectl logs migrate-job -n "$NAMESPACE" || true
+      warn "Migration job did not complete — logs:"
+      kubectl logs -l job-name=migrate-job -n "$NAMESPACE" || true
       die "Migrations failed — aborting deploy"
     }
 
   success "Migrations complete"
-  kubectl logs migrate-job -n "$NAMESPACE"
-  kubectl delete pod migrate-job -n "$NAMESPACE" --ignore-not-found
+  kubectl logs -l job-name=migrate-job -n "$NAMESPACE"
+  kubectl delete job migrate-job -n "$NAMESPACE" --ignore-not-found
 fi
 
 # ── 6. Watch rollout ──────────────────────────────────────────────────────────

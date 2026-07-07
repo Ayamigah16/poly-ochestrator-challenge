@@ -1,9 +1,9 @@
 # Dev overrides: mount source for hot-reload, expose extra ports
 services:
   app:
-    build:
-      target: builder
     command:
+      - python
+      - -m
       - uvicorn
       - poly_orchestrator.main:app
       - --host

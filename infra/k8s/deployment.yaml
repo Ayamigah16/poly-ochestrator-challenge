@@ -34,7 +34,7 @@ spec:
       containers:
         - name: app
           image: ghcr.io/ayamigah16/poly-ochestrator-challenge:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 8000

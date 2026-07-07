@@ -22,7 +22,7 @@ def upgrade() -> None:
     op.create_table(
         "query_records",
         sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("brand", sa.String(200), nullable=False, index=True),
+        sa.Column("brand", sa.String(200), nullable=False),
         sa.Column("query", sa.Text(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("mention_rate", sa.Float(), nullable=False, server_default="0.0"),
@@ -40,7 +40,7 @@ def upgrade() -> None:
     op.create_table(
         "brand_metrics",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column("brand", sa.String(200), nullable=False, index=True),
+        sa.Column("brand", sa.String(200), nullable=False),
         sa.Column("metric_date", sa.DateTime(timezone=True), nullable=False),
         sa.Column("total_queries", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("avg_mention_rate", sa.Float(), nullable=False, server_default="0.0"),

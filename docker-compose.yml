@@ -7,7 +7,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      target: production
     image: poly-orchestrator:local
     container_name: poly_app
     restart: unless-stopped
@@ -75,7 +74,7 @@ services:
   migrate:
     image: poly-orchestrator:local
     container_name: poly_migrate
-    command: ["alembic", "upgrade", "head"]
+    command: ["python", "-m", "alembic", "upgrade", "head"]
     env_file:
       - .env
     environment:
